@@ -25,6 +25,9 @@ streamlit>=1.30.0
 
 # Testing
 pytest>=8.0
-
+streamlit
+langchain
+openai
+chromadb
 
 fpdf2       # to create the new PDF
