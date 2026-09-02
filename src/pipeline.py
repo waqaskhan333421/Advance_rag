@@ -223,11 +223,14 @@ class AdvancedRAGPipeline:
         t0 = time.perf_counter()
 
         chosen_provider = provider or CONFIG.models.provider
-        chosen_llm = llm_model or (
-            CONFIG.models.nvidia.llm_model
-            if chosen_provider == "nvidia"
-            else CONFIG.models.gemini.llm_model
-        )
+        if llm_model:
+            chosen_llm = llm_model
+        elif chosen_provider == "groq":
+            chosen_llm = getattr(CONFIG.models.groq, "llm_model", "llama-3.3-70b-versatile")
+        elif chosen_provider == "nvidia":
+            chosen_llm = getattr(CONFIG.models.nvidia, "llm_model", "nvidia/llama-3.1-nemotron-70b-instruct")
+        else:
+            chosen_llm = getattr(CONFIG.models.gemini, "llm_model", "gemini-2.5-flash")
 
         # 1. Query Transformation (Rewriting + HyDE in a single step)
         t1 = time.perf_counter()
@@ -248,7 +251,7 @@ class AdvancedRAGPipeline:
         if use_dense or use_hyde:
             # Build embedding input: rewritten query + optional HyDE doc
             emb_inputs = [rewritten] + ([hyde_doc] if hyde_doc else [])
-            embs = self.client.embed(emb_inputs, provider="gemini", model=embedding_model)
+            embs = self.client.embed(emb_inputs, provider=chosen_provider, model=embedding_model)
             query_emb = [sum(x) / len(x) for x in zip(*embs)]
 
         if use_dense:
