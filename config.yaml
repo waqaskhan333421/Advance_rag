@@ -3,16 +3,19 @@ app:
   log_level: "INFO"
 
 models:
-  provider: "gemini" # Default provider: "gemini" or "nvidia"
+  provider: "groq" # Default provider: "groq" or "gemini"
   gemini:
     api_key_env: "GEMINI_API_KEY"
-    llm_model: "gemini-3.5-flash-lite"
+    llm_model: "gemini-2.5-flash"
     embedding_model: "gemini-embedding-2-preview"
+  groq:
+    api_key_env: "GROQ_API_KEY"
+    llm_model: "qwen/qwen3.6-27b"
   nvidia:
     api_key_env: "NVIDIA_API_KEY"
     base_url: "https://integrate.api.nvidia.com/v1"
     llm_model: "nvidia/llama-3.1-nemotron-70b-instruct"
-    embedding_model: "nvidia/nv-embedqa-e5-v5"
+    embedding_model: "nvidia/nv-embedqa-e5"
   embedding:
     model_name: "gemini-embedding-2-preview"
     output_dimensionality: 768
