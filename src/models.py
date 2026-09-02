@@ -7,6 +7,7 @@ from typing import List, Optional
 
 from google import genai
 from google.genai import types
+from groq import Groq
 from openai import OpenAI
 from sentence_transformers import CrossEncoder
 
@@ -186,11 +187,64 @@ class NvidiaClient:
                     raise
 
 
+class GroqClient:
+    """Groq client for ultra-fast generation via LLaMA 3.3, LLaMA 3.1, Mixtral, etc."""
+
+    def __init__(self):
+        self.api_key = CONFIG.get_groq_api_key()
+        self.llm_model = (
+            CONFIG.models.groq.llm_model
+            if hasattr(CONFIG.models, "groq") and CONFIG.models.groq
+            else "llama-3.3-70b-versatile"
+        )
+        self.client = Groq(api_key=self.api_key) if self.api_key else None
+
+    def generate(
+        self,
+        prompt: str,
+        system_instruction: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        model: Optional[str] = None,
+    ) -> str:
+        """Generate text using Groq API."""
+        if not self.client:
+            raise ValueError("Groq API Key is not set in environment or .env file.")
+
+        temp = temperature if temperature is not None else CONFIG.models.llm.temperature
+        max_out = max_tokens if max_tokens is not None else CONFIG.models.llm.max_output_tokens
+        llm_model = model or self.llm_model
+
+        messages = []
+        if system_instruction:
+            messages.append({"role": "system", "content": system_instruction})
+        messages.append({"role": "user", "content": prompt})
+
+        for attempt in range(5):
+            try:
+                response = self.client.chat.completions.create(
+                    model=llm_model,
+                    messages=messages,
+                    temperature=temp,
+                    max_tokens=max_out,
+                )
+                return response.choices[0].message.content or ""
+            except Exception as e:
+                if ("429" in str(e) or "rate" in str(e).lower()) and attempt < 4:
+                    wait_time = (2 ** attempt) * 4
+                    logger.warning(f"Groq LLM rate limit hit. Retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"Groq generation failed: {e}")
+                    raise
+
+
 class UnifiedLLMClient:
-    """Unified client that supports Google Gemini, NVIDIA NIM, and auto-failover."""
+    """Unified client that supports Google Gemini, Groq, NVIDIA NIM, and auto-failover."""
 
     def __init__(self):
         self.gemini = GeminiClient()
+        self.groq = GroqClient()
         self.nvidia = NvidiaClient()
 
     def _route(self, provider: Optional[str], model: Optional[str]) -> str:
@@ -198,12 +252,22 @@ class UnifiedLLMClient:
         only when no provider is given do we infer from the model name / config default."""
         if provider:
             return provider.lower()
-        if model and ("/" in model or "llama" in model.lower() or "mistral" in model.lower()):
-            return "nvidia"
-        return (CONFIG.models.provider or "gemini").lower()
+        if model:
+            m = model.lower()
+            if "llama-3.3" in m or "llama-3.1" in m or "mixtral" in m or "deepseek-r1" in m or "groq" in m:
+                return "groq"
+            if "/" in model or "nemotron" in m:
+                return "nvidia"
+        return (CONFIG.models.provider or "groq").lower()
 
     def _client_for(self, provider: str):
-        return self.nvidia if provider == "nvidia" else self.gemini
+        prov = provider.lower()
+        if prov == "groq":
+            return self.groq
+        elif prov == "nvidia":
+            return self.nvidia
+        else:
+            return self.gemini
 
     def generate(
         self,
@@ -234,26 +298,46 @@ class UnifiedLLMClient:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
     ) -> "tuple[str, dict]":
-        """Generate with the SELECTED provider/model first; if it fails, transparently
-        fall back to the other provider and report what actually answered.
-
-        Returns (text, meta) where meta = {provider, model, failed_over,
-        requested_provider, requested_model, primary_error}. This lets callers/UI
-        notify the user when a failover occurred instead of silently mislabeling it.
+        """Generate text using the selected provider/model. If a provider is explicitly
+        supplied, use only that provider (no automatic fallback). If no provider is
+        given, fall back to the default routing logic.
         """
+        if provider:
+            # Explicit provider selection – use only this client.
+            prov = provider.lower()
+            client = self._client_for(prov)
+            if client.client is None:
+                raise ValueError(f"API key for provider '{prov}' is not configured")
+            try:
+                text = client.generate(
+                    prompt=prompt,
+                    system_instruction=system_instruction,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    model=model,
+                )
+                meta = {
+                    "provider": prov,
+                    "model": model or client.llm_model,
+                    "failed_over": False,
+                    "requested_provider": prov,
+                    "requested_model": model or client.llm_model,
+                    "primary_error": None,
+                }
+                return text, meta
+            except Exception as e:
+                raise RuntimeError(f"Generation failed for provider '{prov}': {e}")
+        # No explicit provider – retain existing routing/fallback behavior.
         primary = self._route(provider, model)
-        order = ["nvidia", "gemini"] if primary == "nvidia" else ["gemini", "nvidia"]
+        order = ["groq", "gemini", "nvidia"] if primary == "groq" else (["gemini", "groq", "nvidia"] if primary == "gemini" else ["nvidia", "groq", "gemini"])
         requested_model = model or self._client_for(primary).llm_model
-
-        errors: "dict[str, str]" = {}
+        errors: dict[str, str] = {}
         for prov in order:
             client = self._client_for(prov)
             if client.client is None:
                 errors[prov] = "API key not configured"
                 continue
             is_primary = prov == primary
-            # The chosen model id belongs to the primary provider; on fallback use the
-            # other provider's own default model (the chosen id won't exist there).
             use_model = model if is_primary else None
             try:
                 text = client.generate(
@@ -293,21 +377,18 @@ class UnifiedLLMClient:
         provider: Optional[str] = None,
         model: Optional[str] = None,
     ) -> list[list[float]]:
+        """Embed texts. If provider is nvidia, use nvidia; otherwise use gemini."""
         chosen_provider = (provider or CONFIG.models.provider).lower()
         if chosen_provider == "nvidia":
-            try:
-                return self.nvidia.embed(texts, model=model)
-            except Exception as e:
-                logger.warning(f"NVIDIA embed failed ({e}), attempting Gemini fallback...")
-                return self.gemini.embed(texts)
+            return self.nvidia.embed(texts, model=model)
         else:
-            try:
-                return self.gemini.embed(texts, model=model)
-            except Exception as e:
-                logger.warning(f"Gemini embed failed ({e}), attempting NVIDIA fallback...")
-                if self.nvidia.client:
-                    return self.nvidia.embed(texts)
-                raise
+            # Gemini embedding client (used for gemini and groq)
+            return self.gemini.embed(texts, model=model)
+
+
+@lru_cache(maxsize=1)
+def get_groq_client() -> GroqClient:
+    return GroqClient()
 
 
 @lru_cache(maxsize=1)
