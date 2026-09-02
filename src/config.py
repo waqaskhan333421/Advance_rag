@@ -35,6 +35,11 @@ class GeminiConfig(BaseModel):
     embedding_model: str = "gemini-embedding-2-preview"
 
 
+class GroqConfig(BaseModel):
+    api_key_env: str = "GROQ_API_KEY"
+    llm_model: str = "llama-3.3-70b-versatile"
+
+
 class NvidiaConfig(BaseModel):
     api_key_env: str = "NVIDIA_API_KEY"
     base_url: str = "https://integrate.api.nvidia.com/v1"
@@ -47,8 +52,9 @@ class CrossEncoderConfig(BaseModel):
 
 
 class ModelsConfig(BaseModel):
-    provider: str = "gemini"  # "gemini" | "nvidia"
+    provider: str = "groq"  # "groq" | "gemini" | "nvidia"
     gemini: GeminiConfig = Field(default_factory=GeminiConfig)
+    groq: GroqConfig = Field(default_factory=GroqConfig)
     nvidia: NvidiaConfig = Field(default_factory=NvidiaConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
@@ -100,6 +106,9 @@ class Config(BaseModel):
 
     def get_gemini_api_key(self) -> str:
         return os.environ.get(self.models.gemini.api_key_env, os.environ.get("GEMINI_API_KEY", ""))
+
+    def get_groq_api_key(self) -> str:
+        return os.environ.get(self.models.groq.api_key_env, os.environ.get("GROQ_API_KEY", ""))
 
     def get_nvidia_api_key(self) -> str:
         return os.environ.get(self.models.nvidia.api_key_env, os.environ.get("NVIDIA_API_KEY", ""))
