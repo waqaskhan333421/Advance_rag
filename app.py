@@ -68,6 +68,7 @@ st.markdown(
     .badge-emerald { background-color: #064e3b; color: #a7f3d0; }
     .badge-nvidia { background-color: #155e75; color: #67e8f9; }
     .badge-gemini { background-color: #4338ca; color: #c7d2fe; }
+    .badge-groq   { background-color: #c2410c; color: #ffedd5; }
     
     .source-box {
         background-color: #0f172a;
@@ -265,15 +266,40 @@ def main():
         # Provider selector
         provider_choice = st.radio(
             "Select LLM Provider:",
-            options=["Google Gemini", "NVIDIA NIM"],
+            options=["Groq (Ultra-Fast)", "Google Gemini", "NVIDIA NIM"],
             index=0,
-            help="Switch between Google Gemini and NVIDIA NIM models to balance quota and prevent rate limits.",
+            help="Switch between Groq, Google Gemini, and NVIDIA NIM models.",
         )
-        selected_provider = "gemini" if provider_choice == "Google Gemini" else "nvidia"
+        if provider_choice == "Groq (Ultra-Fast)":
+            selected_provider = "groq"
+        elif provider_choice == "Google Gemini":
+            selected_provider = "gemini"
+        else:
+            selected_provider = "nvidia"
 
         # Model Selector based on provider
-        if selected_provider == "gemini":
+        if selected_provider == "groq":
+            groq_models = [
+                "llama-3.3-70b-versatile",
+                "llama-3.1-8b-instant",
+                "mixtral-8x7b-32768",
+                "gemma2-9b-it",
+                "deepseek-r1-distill-llama-70b",
+                "Custom...",
+            ]
+            chosen_gr = st.selectbox(
+                "Groq Model:",
+                options=groq_models,
+                index=0,
+                help="Select ultra-fast LLM hosted on Groq LPU hardware.",
+            )
+            if chosen_gr == "Custom...":
+                selected_model = st.text_input("Enter Groq Model Identifier:", value="llama-3.3-70b-versatile")
+            else:
+                selected_model = chosen_gr
+        elif selected_provider == "gemini":
             gemini_models = [
+                "gemini-2.5-flash",
                 "gemini-3.5-flash-lite",
                 "gemini-3.1-flash-lite",
                 "gemini-3.5-flash",
@@ -313,25 +339,29 @@ def main():
 
         # API Keys Status
         st.markdown("---")
+        groq_key = os.getenv("GROQ_API_KEY", "")
         gemini_key = os.getenv(CONFIG.models.gemini.api_key_env, os.getenv("GEMINI_API_KEY", ""))
         nvidia_key = os.getenv(CONFIG.models.nvidia.api_key_env, os.getenv("NVIDIA_API_KEY", ""))
         pinecone_key = os.getenv(CONFIG.pinecone.api_key_env, os.getenv("PINECONE_API_KEY", ""))
         
         with st.expander("🔑 API Key Status", expanded=False):
+            if groq_key:
+                st.success("✅ Groq API Key: Active")
+            else:
+                st.warning("⚠️ Groq API Key: Missing (.env)")
+
             if gemini_key:
                 st.success("✅ Gemini API Key: Active")
             else:
                 st.error("❌ Gemini API Key: Missing")
 
-            if nvidia_key:
-                st.success("✅ NVIDIA API Key: Active")
-            else:
-                st.warning("⚠️ NVIDIA API Key: Missing (.env)")
-                
             if pinecone_key:
                 st.success("✅ Pinecone API Key: Active")
             else:
                 st.error("❌ Pinecone API Key: Missing")
+
+            if nvidia_key:
+                st.info("ℹ️ NVIDIA API Key: Optional")
 
         # ── Technique Selector ────────────────────────────────────────────
         st.markdown("---")
@@ -467,7 +497,12 @@ def main():
             elif not st.session_state.selected_doc_path and all_pdfs:
                 st.session_state.selected_doc_path = str(all_pdfs[0])
 
-            provider_badge = f'<span class="badge badge-gemini">🤖 Provider: Gemini ({selected_model})</span>' if selected_provider == "gemini" else f'<span class="badge badge-nvidia">🟢 Provider: NVIDIA NIM ({selected_model})</span>'
+            if selected_provider == "groq":
+                provider_badge = f'<span class="badge badge-groq">⚡ Provider: Groq ({selected_model})</span>'
+            elif selected_provider == "gemini":
+                provider_badge = f'<span class="badge badge-gemini">🤖 Provider: Gemini ({selected_model})</span>'
+            else:
+                provider_badge = f'<span class="badge badge-nvidia">🟢 Provider: NVIDIA NIM ({selected_model})</span>'
 
             if selected_doc_id:
                 scope_badge = f'<span class="badge badge-warning">🎯 Resource: {selected_resource_label}</span>'
@@ -510,7 +545,7 @@ def main():
 
                         if hasattr(res, "latency_ms") and res.latency_ms:
                             lats = res.latency_ms
-                            p_badge = "badge-gemini" if res.provider_used == "gemini" else "badge-nvidia"
+                            p_badge = "badge-groq" if res.provider_used == "groq" else ("badge-gemini" if res.provider_used == "gemini" else "badge-nvidia")
                             st.markdown(
                                 f"""
                                 <div style="margin-top: 8px; margin-bottom: 8px;">
